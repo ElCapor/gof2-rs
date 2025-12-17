@@ -1,0 +1,53 @@
+[package]
+name = "gof2-rs"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "d3d9"
+crate-type = ["cdylib"]
+
+# Remove this entire [build] section
+# [build]
+# target="i686-pc-windows-msvc"
+
+[dependencies]
+ilhook = { version = "2.3.0", features = ["x86"], default-features=false }
+libmem = "5.1.4"
+parking_lot = "0.12.5"
+winapi = { version = "0.3.9", features = ["consoleapi", "minwindef", "d3d9", "libloaderapi", "winnt"] }
+
+[profile.dev]
+debug = true
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+  "Foundation_Numerics",
+  "Win32_Devices_HumanInterfaceDevice",
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Direct3D12",
+  "Win32_Graphics_Direct3D9",
+  "Win32_Graphics_Direct3D_Fxc",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_OpenGL",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_SystemInformation",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+# Add check-cfg configuration to handle the cfg(target) lint warning
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target, values("i686-pc-windows-msvc"))'] }
