@@ -1,4 +1,4 @@
-use std::{io::Read, ops::{Index, IndexMut}};
+use std::{io::Read, ops::{Index, IndexMut, Add}};
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -164,6 +164,26 @@ impl Default for Vector3Int {
     fn default() -> Self {
         Self { x: 0, y: 0, z: 0 }
     }
+
+    
+}
+
+impl Vector3Int {
+    pub fn new(x: i32, y: i32, z: i32) -> Self {
+        Self { x, y, z }
+    }
+}
+
+impl Add for Vector3Int {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
+    }
 }
 
 #[repr(C)]
@@ -226,6 +246,9 @@ impl<T: Sized> RWObject for T {
 pub trait PtrRW<T> {
     fn read_val(self) -> Option<T>;
     fn write_val(self, val: T) -> Result<(), ()>;
+    /// Returns a mutable reference to the value.
+    /// Safety: The pointer must be valid and aligned. The lifetime is unbound ('static) so use with caution.
+    fn read_val_mut(self) -> Option<&'static mut T>;
 }
 
 impl<T> PtrRW<T> for *mut T {
@@ -235,6 +258,14 @@ impl<T> PtrRW<T> for *mut T {
 
     fn write_val(self, val: T) -> Result<(), ()> {
         crate::memory::write(self as usize, val)
+    }
+
+    fn read_val_mut(self) -> Option<&'static mut T> {
+        if self.is_null() {
+            None
+        } else {
+            unsafe { Some(&mut *self) }
+        }
     }
 }
 

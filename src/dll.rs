@@ -38,6 +38,15 @@ pub fn inject_system()
     let mut wolf_reiser_copy = wolf_reiser.read_val().expect("Failed to read system").deep_copy();
     println!("wolf_reiser_copy: {:?}", wolf_reiser_copy);
     wolf_reiser_copy.name = AeString::new("New-System");
+    wolf_reiser_copy.id = 28;
+    wolf_reiser_copy.jumpgate_station_id = wolf_reiser.read_val().expect("Failed to read system").jumpgate_station_id;
+
+    wolf_reiser_copy.pos = wolf_reiser.read_val().expect("Failed to read system").pos + Vector3Int::new(10, 10, 10);
+
+    let mut new_systems = AeArray::new(1);
+    new_systems.read_val_mut().unwrap()[0] = wolf_reiser_copy.id;
+    wolf_reiser_copy.linked_system_ids = new_systems;
+    wolf_reiser_copy.starts_unlocked = true;
     println!("wolf_reiser_copy name: {}", wolf_reiser_copy.name.to_string());
 
 
