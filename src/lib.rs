@@ -1,7 +1,7 @@
 #![cfg(windows)]
 mod console;
 mod dll;
-
+pub mod structs;
 
 extern crate core;
 
