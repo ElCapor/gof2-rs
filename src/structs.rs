@@ -106,6 +106,14 @@ impl<T> AeArray<T> {
         unsafe { std::slice::from_raw_parts_mut(self.data, self.size as usize) }
     }
 
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.as_slice().iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.as_mut_slice().iter_mut()
+    }
+
     /// Pushes a new element into the array by allocating a new buffer,
     /// deep copying all existing elements, adding the new one, and updating the pointer.
     /// The old buffer is leaked (not freed) to avoid potential crashes if the game still holds references.

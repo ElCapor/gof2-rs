@@ -1,5 +1,6 @@
 #![allow(unsupported_calling_conventions)]
 use std::ops::Add;
+use std::thread;
 use crate::structs::*;
 use crate::console;
 use ilhook::x86::{CallbackOption, HookFlags, HookType, Hooker, Registers};
@@ -17,6 +18,18 @@ use crate::memory::read;
 static GLOBALS_GALAXY_SET_ADDR: usize = 0x0040AA46;
 static GLOBALS_GALAXY : usize = 0x0060AF3C;
 static GLOBALS_INIT: usize = 0x0044B20C;
+static GLOBALS_STATUS: usize = 0x0060AD6C;
+
+
+/*
+######## ##    ## ##    ##    ######## ########    ###    ######## ##    ## #######  ########  ###### 
+##       ##    ## ###   ##    ##       ##         ## ##      ##    ##    ## ##    ## ##       ##    ##
+##       ##    ## ####  ##    ##       ##        ##   ##     ##    ##    ## ##    ## ##       ##      
+######   ##    ## ## ## ##    ######   ######   ##     ##    ##    ##    ## #######  ######    ###### 
+##       ##    ## ##  ####    ##       ##       #########    ##    ##    ## ##  ##   ##             ##
+##       ##    ## ##   ###    ##       ##       ##     ##    ##    ##    ## ##   ##  ##       ##    ##
+##        ######  ##    ##    ##       ######## ##     ##    ##     ######  ##    ## ########  ###### 
+*/
 
 
 /*
@@ -28,6 +41,18 @@ static GLOBALS_INIT: usize = 0x0044B20C;
 ##    ## ##     ## ##       ##     ##  ##  ##     ##   
  ######  ##     ## ######## ##     ## ##    ##    ##   
 */
+pub fn patch_visibilities()
+{
+    // visibilities = status + 0x24
+    let status = read::<usize>(GLOBALS_STATUS).expect("Failed to get status");
+    let mut visibilities = read::<*mut AeArray<bool>>(status.add(0x24)).expect("Failed to get visibilities").read_val_mut().unwrap();
+    visibilities.push(true);
+    for visibility in visibilities.iter_mut() {
+        *visibility = true;
+    }
+    
+}
+
 pub fn inject_system()
 {
     let galaxy = read::<usize>(GLOBALS_GALAXY).expect("Failed to get galaxy");
@@ -37,10 +62,10 @@ pub fn inject_system()
     println!("wolf_reiser: {:?}", wolf_reiser.read_val().expect("Failed to read system"));
     let mut wolf_reiser_copy = wolf_reiser.read_val().expect("Failed to read system").deep_copy();
     wolf_reiser_copy.name = AeString::new("Wolf-Reisor");
-    wolf_reiser_copy.id = 28;
+    wolf_reiser_copy.id = 27;
     wolf_reiser_copy.jumpgate_station_id = wolf_reiser.read_val().expect("Failed to read system").jumpgate_station_id;
 
-    wolf_reiser_copy.pos = wolf_reiser.read_val().expect("Failed to read system").pos + Vector3Int::new(10, 10, 10);
+    wolf_reiser_copy.pos = Vector3Int::new(70, 17, 47);
 
     let mut new_systems = AeArray::new(1);
     new_systems.read_val_mut().unwrap()[0] = wolf_reiser_copy.id;
@@ -55,6 +80,7 @@ pub fn inject_system()
     systems_clone.push(wolf_reiser_copy.leak_to_heap());
     galaxy.systems = systems_clone.leak_to_heap();
     crate::memory::write(GLOBALS_GALAXY, galaxy.leak_to_heap());
+
     
     
     //let systems = read::<usize>(galaxy.add(0x4)).expect("Failed to get systems");
@@ -89,6 +115,13 @@ unsafe extern "stdcall" fn on_init(arg1:usize, arg2:usize, arg3:usize) -> usize 
     console::wait_line();
     // We can now inject a system ??
     inject_system();
+
+    thread::spawn(||{
+        std::thread::sleep(std::time::Duration::from_secs(10));
+        patch_visibilities();
+    });
+    
+
     return result;
 }
 
