@@ -36,8 +36,7 @@ pub fn inject_system()
     let wolf_reiser = systems.as_slice().iter().find(|system| system.read_val().expect("Failed to read system").name.to_string() == "Wolf-Reiser").expect("Failed to find Wolf-Reiser");
     println!("wolf_reiser: {:?}", wolf_reiser.read_val().expect("Failed to read system"));
     let mut wolf_reiser_copy = wolf_reiser.read_val().expect("Failed to read system").deep_copy();
-    println!("wolf_reiser_copy: {:?}", wolf_reiser_copy);
-    wolf_reiser_copy.name = AeString::new("New-System");
+    wolf_reiser_copy.name = AeString::new("Wolf-Reisor");
     wolf_reiser_copy.id = 28;
     wolf_reiser_copy.jumpgate_station_id = wolf_reiser.read_val().expect("Failed to read system").jumpgate_station_id;
 
@@ -47,6 +46,7 @@ pub fn inject_system()
     new_systems.read_val_mut().unwrap()[0] = wolf_reiser_copy.id;
     wolf_reiser_copy.linked_system_ids = new_systems;
     wolf_reiser_copy.starts_unlocked = true;
+    println!("wolf_reiser_copy: {:?}", wolf_reiser_copy);
     println!("wolf_reiser_copy name: {}", wolf_reiser_copy.name.to_string());
 
 
