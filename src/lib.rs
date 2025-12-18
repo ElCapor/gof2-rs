@@ -2,6 +2,7 @@
 mod console;
 mod dll;
 pub mod structs;
+pub mod memory;
 
 extern crate core;
 
