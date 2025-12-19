@@ -1,4 +1,4 @@
-#![allow(unsupported_calling_conventions)]
+#![allow(unsupported_calling_conventions, static_mut_refs)]
 use std::ops::Add;
 use std::thread;
 use crate::structs::*;
@@ -138,6 +138,92 @@ pub fn inject_system()
 }
 
 
+static GLOBAL_LOAD_STATION_FROM_ID: usize = 0x408880;
+static GLOBAL_LOAD_STATIONS_FROM_SYSTEM: usize = 0x408C4B;
+
+
+
+
+pub type LoadStationFromIdFn = unsafe extern "stdcall" fn(_: *mut u16) -> usize;
+pub type LoadStationsFromSystemFn = unsafe extern "stdcall" fn(_: *mut System) -> usize;
+
+static mut LOAD_STATION_FROM_ID_ORIG: Option<LoadStationFromIdFn> = None;
+static mut LOAD_STATIONS_FROM_SYSTEM_ORIG: Option<LoadStationsFromSystemFn> = None;
+
+
+#[repr(C)]
+#[derive(Clone)]
+pub struct Station {
+    pub name: AeString,
+    pub id: usize,
+    pub system_id: usize,
+    pub unk0: usize,
+    pub tex_id: usize,
+    pub unk1: usize,
+    pub tech_level: usize,
+    pub unk2: [u8; 20]
+}
+
+impl Default for Station {
+    fn default() -> Self {
+        Self {
+            name: AeString::new(""),
+            id: 0,
+            system_id: 0,
+            unk0: 0,
+            tex_id: 0,
+            unk1: 0,
+            tech_level: 0,
+            unk2: [0; 20]
+        }
+    }
+}
+
+static mut STATIONS: Vec<Station> = Vec::new();
+
+pub unsafe extern "stdcall" fn load_station_from_id(id: *mut u16) -> usize {
+    unsafe { 
+        if STATIONS.iter().any(|station| station.id == id.read_val().unwrap() as usize) {
+        let result = AeArray::<Station>::new(1);
+        result.read_val_mut().unwrap()[0] = STATIONS.iter().find(|station| station.id == id.read_val().unwrap() as usize).unwrap().clone();
+        return result as usize;
+    }
+    }
+
+    let result = unsafe {
+        LOAD_STATION_FROM_ID_ORIG.as_ref().unwrap()(id)
+    };
+    //println!("load_station_from_id param: {:X}", id);
+    println!("load_station_from_id: {:X}", result);
+    result
+}
+
+pub unsafe extern "stdcall" fn load_stations_from_system(system: *mut System) -> usize {
+
+    let sys: System = system.read_val().expect("Failed to read system");
+    unsafe {
+        // collect all stations with system id equal to sys.id
+        let stations = STATIONS.iter().filter(|station| station.system_id == sys.id as usize).collect::<Vec<_>>();
+        if !stations.is_empty() {
+            let result = AeArray::<Station>::new(stations.len() as u32);
+            for i in 0..stations.len() {
+                result.read_val_mut().unwrap()[i] = stations[i].clone();
+            }
+            println!("Return {:X}", result as usize);
+            return result as usize;
+        }
+    }
+
+    let result = unsafe {
+        LOAD_STATIONS_FROM_SYSTEM_ORIG.as_ref().unwrap()(system)
+    };
+    println!("load_stations_from_system param: {:X}", system as usize);
+    println!("load_stations_from_system: {:X}", result);
+
+
+    result
+}
+
 
 
 /*
@@ -205,13 +291,39 @@ unsafe extern "stdcall" fn on_init(arg1:usize, arg2:usize, arg3:usize) -> usize 
 */
 pub fn entry_point() {
     
+    unsafe {
+        STATIONS.push(Station {
+        name: AeString::new("Frenchie station"),
+        id: 109,
+        system_id: 27,
+        unk0: 0,
+        tex_id: 10,
+        unk1: 0,
+        tech_level: 10,
+        unk2: [0; 20],
+    });
+}
     //crate::memory::suspend_process();
     unsafe { 
         println!("GLOBALS_INIT: {:X}", on_init as usize);
         if let Some(trampoline) = hook_code(GLOBALS_INIT,on_init as usize) {
             GLOBALS_INIT_TRAMPOLINE = Some(trampoline);
         }
+
+        console::wait_line();
+
+        println!("GLOBAL_LOAD_STATION_FROM_ID: {:X}", GLOBAL_LOAD_STATION_FROM_ID);
+        println!("GLOBAL_LOAD_STATIONS_FROM_SYSTEM: {:X}", GLOBAL_LOAD_STATIONS_FROM_SYSTEM);
+
+        if let Some(trampoline) = hook_code(GLOBAL_LOAD_STATION_FROM_ID, load_station_from_id as usize) {
+            LOAD_STATION_FROM_ID_ORIG = Some(trampoline.callable::<LoadStationFromIdFn>());
+        }
+
+        if let Some(trampoline) = hook_code(GLOBAL_LOAD_STATIONS_FROM_SYSTEM, load_stations_from_system as usize) {
+            LOAD_STATIONS_FROM_SYSTEM_ORIG = Some(trampoline.callable::<LoadStationsFromSystemFn>());
+        }
     }
+
     //crate::memory::resume_process();
     
     // thread::spawn(||{
