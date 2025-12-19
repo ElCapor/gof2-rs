@@ -19,6 +19,7 @@ static GLOBALS_GALAXY_SET_ADDR: usize = 0x0040AA46;
 static GLOBALS_GALAXY : usize = 0x0060AF3C;
 static GLOBALS_INIT: usize = 0x0044B20C;
 static GLOBALS_STATUS: usize = 0x0060AD6C;
+static GLOBALS_APP_MANAGER: usize = 0x0060AEFC;
 
 
 /*
@@ -30,6 +31,15 @@ static GLOBALS_STATUS: usize = 0x0060AD6C;
 ##       ##    ## ##   ###    ##       ##       ##     ##    ##    ##    ## ##   ##  ##       ##    ##
 ##        ######  ##    ##    ##       ######## ##     ##    ##     ######  ##    ## ########  ###### 
 */
+
+
+pub fn patch_news()
+{
+    let app_manager = read::<*mut AppManager>(GLOBALS_APP_MANAGER).expect("Failed to get app manager").read_val_mut().unwrap();
+    let mod_station = app_manager.modules.read_val_mut().expect("Failed to get modules").mod_station.read_val_mut().expect("Failed to read station");
+    let mod_station_news = mod_station.news.read_val_mut().expect("Failed to read news");
+    mod_station_news.news.size = 2;
+}
 
 
 /*
@@ -53,6 +63,33 @@ pub fn patch_visibilities()
     
 }
 
+// patch star map to show N systems
+pub fn patch_star_map(n: u8)
+{
+    let push_27 = 0x004CE771;
+    // replace push_27 with push_n
+    // original = 6A 1B
+    // target = 6A n
+    // modify memory protection before writing
+    let old_protection = crate::memory::set_protection(push_27, 2, windows::Win32::System::Memory::PAGE_EXECUTE_READWRITE.0).expect("Failed to change protection for page");
+    crate::memory::write::<u8>(push_27 + 0x1, n).expect("Failed to write memory");
+    crate::memory::set_protection(push_27, 2, old_protection).expect("Failed to change protection for page");
+}
+
+pub fn patch_load_stations()
+{
+    let patch1 = 0x004089B9; // 6D TO 6E
+
+    let old_protection = crate::memory::set_protection(patch1, 1, windows::Win32::System::Memory::PAGE_EXECUTE_READWRITE.0).expect("Failed to change protection for page");
+    crate::memory::write::<u8>(patch1, 0x6E).expect("Failed to write memory");
+    crate::memory::set_protection(patch1, 1, old_protection).expect("Failed to change protection for page");
+
+    let patch2 = 0x408DFE; // 6D TO 6E
+    let old_protection = crate::memory::set_protection(patch2, 1, windows::Win32::System::Memory::PAGE_EXECUTE_READWRITE.0).expect("Failed to change protection for page");
+    crate::memory::write::<u8>(patch2, 0x6E).expect("Failed to write memory");
+    crate::memory::set_protection(patch2, 1, old_protection).expect("Failed to change protection for page");
+}
+
 pub fn inject_system()
 {
     let galaxy = read::<usize>(GLOBALS_GALAXY).expect("Failed to get galaxy");
@@ -61,11 +98,11 @@ pub fn inject_system()
     let wolf_reiser = systems.as_slice().iter().find(|system| system.read_val().expect("Failed to read system").name.to_string() == "Wolf-Reiser").expect("Failed to find Wolf-Reiser");
     println!("wolf_reiser: {:?}", wolf_reiser.read_val().expect("Failed to read system"));
     let mut wolf_reiser_copy = wolf_reiser.read_val().expect("Failed to read system").deep_copy();
-    wolf_reiser_copy.name = AeString::new("Wolf-Reisor");
+    wolf_reiser_copy.name = AeString::new("Custom System");
     wolf_reiser_copy.id = 27;
-    wolf_reiser_copy.jumpgate_station_id = wolf_reiser.read_val().expect("Failed to read system").jumpgate_station_id;
+    wolf_reiser_copy.jumpgate_station_id = 30;//wolf_reiser.read_val().expect("Failed to read system").jumpgate_station_id;
 
-    wolf_reiser_copy.pos = Vector3Int::new(70, 17, 47);
+    wolf_reiser_copy.pos = Vector3Int::new(80, 30, 47);
 
     let mut new_systems = AeArray::new(1);
     new_systems.read_val_mut().unwrap()[0] = wolf_reiser_copy.id;
@@ -74,13 +111,23 @@ pub fn inject_system()
     println!("wolf_reiser_copy: {:?}", wolf_reiser_copy);
     println!("wolf_reiser_copy name: {}", wolf_reiser_copy.name.to_string());
 
+    let new_stations = AeArray::new(1);
+    new_stations.read_val_mut().unwrap()[0] = 109;
+    wolf_reiser_copy.station_ids = new_stations;
+
 
 
     let mut systems_clone = systems.deep_copy();
     systems_clone.push(wolf_reiser_copy.leak_to_heap());
     galaxy.systems = systems_clone.leak_to_heap();
-    crate::memory::write(GLOBALS_GALAXY, galaxy.leak_to_heap());
+    let idk_stations = vec![0u8; 109].as_mut_ptr();
+    std::mem::forget(idk_stations);
+    //galaxy.stations = idk_stations;
 
+    crate::memory::write(GLOBALS_GALAXY, galaxy.leak_to_heap());
+    patch_star_map(28);
+
+    patch_load_stations();
     
     
     //let systems = read::<usize>(galaxy.add(0x4)).expect("Failed to get systems");
@@ -112,14 +159,22 @@ unsafe extern "stdcall" fn on_init(arg1:usize, arg2:usize, arg3:usize) -> usize 
         GLOBALS_INIT_TRAMPOLINE.as_ref().unwrap().callable::<GlobalsInitFn>()(arg1,arg2,arg3) as usize
     };
     
-    console::wait_line();
+    //console::wait_line();
     // We can now inject a system ??
     inject_system();
 
-    thread::spawn(||{
-        std::thread::sleep(std::time::Duration::from_secs(10));
-        patch_visibilities();
-    });
+    // thread::spawn(||{
+    //     std::thread::sleep(std::time::Duration::from_secs(10));
+    //     patch_visibilities();
+    // });
+
+    // thread::spawn(||{
+    //     std::thread::sleep(std::time::Duration::from_secs(15));
+    //     while (true)
+    //     {
+    //         patch_news();
+    //     }
+    // });
     
 
     return result;
@@ -150,13 +205,19 @@ unsafe extern "stdcall" fn on_init(arg1:usize, arg2:usize, arg3:usize) -> usize 
 */
 pub fn entry_point() {
     
+    //crate::memory::suspend_process();
     unsafe { 
         println!("GLOBALS_INIT: {:X}", on_init as usize);
         if let Some(trampoline) = hook_code(GLOBALS_INIT,on_init as usize) {
             GLOBALS_INIT_TRAMPOLINE = Some(trampoline);
         }
     }
+    //crate::memory::resume_process();
     
+    // thread::spawn(||{
+    //     std::thread::sleep(std::time::Duration::from_secs(5));
+    //     inject_system();
+    // });
 
     //console::wait_line_press_to_exit(0);
 }

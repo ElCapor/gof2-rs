@@ -213,8 +213,14 @@ pub struct System {
 
 #[repr(C)]
 #[derive(Debug)]
+pub struct Station {
+
+}
+
+#[repr(C)]
+#[derive(Debug)]
 pub struct Galaxy {
-    pub unk0: usize, // uintptr_t
+    pub stations: *mut u8,
     pub systems: *mut AeArray<*mut System>,
 }
 
@@ -419,7 +425,7 @@ impl DeepCopy for System {
 
 impl DeepCopy for Galaxy {
     fn deep_copy(&self) -> Self {
-        let mut new_galaxy = Self { unk0: self.unk0, systems: std::ptr::null_mut() };
+        let mut new_galaxy = Self { stations: self.stations, systems: std::ptr::null_mut() };
         
         if !self.systems.is_null() {
             unsafe {
@@ -436,3 +442,38 @@ impl DeepCopy for Galaxy {
 
 
 
+pub struct ModStationNewsStruct {
+    pub unk0: [u8; 0x14],
+    pub news: AeString,
+}
+pub struct ModStation {
+    pub unk0: [u8; 0x18],
+    pub news: *mut ModStationNewsStruct,
+}
+
+pub struct MGame {
+
+}
+
+pub struct ModMainMenu {
+
+}
+
+pub struct ModTitle {
+    
+}
+
+pub struct ModulesList {
+    pub m_game: *mut MGame,
+    pub mod_main_menu: *mut ModMainMenu,
+    pub mod_station: *mut ModStation,
+    pub mod_title: *mut ModTitle,
+}
+
+
+pub struct AppManager
+{
+    pub unk0: [u8; 0x44],
+    // TODO: Set this as an aearray way later
+    pub modules: *mut ModulesList,
+}

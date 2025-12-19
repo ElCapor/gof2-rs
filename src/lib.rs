@@ -83,9 +83,10 @@ fn initialize() {
         }
 
         consoleapi::AllocConsole();
-        let _ = thread::spawn(|| {
-                dll::entry_point();
-            });
+        dll::entry_point();
+        // let _ = thread::spawn(|| {
+        //         dll::entry_point();
+        //     });
         
     }
 }
