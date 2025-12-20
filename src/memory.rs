@@ -1,3 +1,4 @@
+#![allow(static_mut_refs)]
 /*
 ##    ## ######## ##    ##  ######  #######  ##    ##
 ###  ### ##       ###  ### ##    ## ##    ##  ##  ## 
@@ -11,21 +12,70 @@
 use windows::Win32::System::Memory::{
     VirtualProtect, PAGE_PROTECTION_FLAGS, HeapAlloc, GetProcessHeap, HEAP_ZERO_MEMORY
 };
+use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+use windows::core::PCSTR;
 use std::alloc::{alloc, Layout};
 
-/// Allocates memory of size `n` bytes on the process heap using Windows API.
-/// This is more compatible with games that use the standard Windows allocator.
+type MallocFn = unsafe extern "C" fn(usize) -> usize;
+static mut MALLOC: Option<MallocFn> = None;
+
+/// Allocates memory of size `n` bytes using the game's CRT allocator.
+/// This attempts to find `malloc` in common CRT DLLs to ensure compatibility.
 pub fn allocate(n: usize) -> usize {
     if n == 0 {
         return 0;
     }
     unsafe {
-        let heap = GetProcessHeap().expect("Failed to get process heap");
-        let ptr = HeapAlloc(heap, HEAP_ZERO_MEMORY, n);
-        if ptr.is_null() {
-            0
+        // Initialize MALLOC function pointer if not already done
+        if MALLOC.is_none() {
+            let crt_names = [
+                "msvcr100.dll", // Prioritize VS2010 CRT (likely for GoF2)
+                "msvcr120.dll",
+                "msvcr110.dll",
+                "msvcr90.dll",
+                "msvcr80.dll",
+                "msvcr71.dll",
+                "ucrtbase.dll",
+                "msvcrt.dll",   // System CRT as last resort
+            ];
+
+            let malloc_name = std::ffi::CString::new("malloc").unwrap();
+            
+            for name in crt_names.iter() {
+                let c_name = std::ffi::CString::new(*name).unwrap();
+                let handle = GetModuleHandleA(PCSTR(c_name.as_ptr() as *const _)).unwrap_or_default();
+                
+                if !handle.is_invalid() {
+                    if let Some(addr) = GetProcAddress(handle, PCSTR(malloc_name.as_ptr() as *const _)) {
+                        println!("Found malloc in {}", name);
+                        MALLOC = Some(std::mem::transmute(addr));
+                        break;
+                    }
+                }
+            }
+            
+            if MALLOC.is_none() {
+                println!("WARNING: Could not find malloc in any common CRT DLL. Falling back to Process Heap.");
+            }
+        }
+
+        // Use msvcrt malloc if available
+        if let Some(malloc_fn) = MALLOC {
+            let ptr = malloc_fn(n);
+            if ptr != 0 {
+                // Zero initialize the memory
+                std::ptr::write_bytes(ptr as *mut u8, 0, n);
+            }
+            ptr
         } else {
-            ptr as usize
+            // Fallback to process heap
+            let heap = GetProcessHeap().expect("Failed to get process heap");
+            let ptr = HeapAlloc(heap, HEAP_ZERO_MEMORY, n);
+            if ptr.is_null() {
+                0
+            } else {
+                ptr as usize
+            }
         }
     }
 }

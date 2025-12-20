@@ -19,24 +19,20 @@ impl Default for AeString {
 
 impl AeString {
     pub fn new(s: &str) -> Self {
-        let v: Vec<u16> = s.encode_utf16().collect();
-        let len = v.len();
-        let size_bytes = (len + 1) * 2; // +1 for null terminator, u16 is 2 bytes
+        let v: Vec<u16> = s.encode_utf16().chain(std::iter::once(0)).collect();
+        let size = v.len() as u32;
         
-        let text_addr = crate::memory::allocate(size_bytes);
-        let text = text_addr as *mut u16;
+        // Allocate using msvcrt malloc
+        let size_bytes = (size as usize) * std::mem::size_of::<u16>();
+        let text = crate::memory::allocate(size_bytes) as *mut u16;
         
         if !text.is_null() {
             unsafe {
-                let slice = std::slice::from_raw_parts_mut(text, len + 1);
-                for (i, c) in v.iter().enumerate() {
-                    slice[i] = *c;
-                }
-                slice[len] = 0; // Null terminator
+                std::ptr::copy_nonoverlapping(v.as_ptr(), text, size as usize);
             }
         }
 
-        Self { text, size: len as u32 } // Size usually excludes null terminator in some counts, but let's check original. Original: v.len().
+        Self { text, size }
     }
 
     pub fn to_string(&self) -> String {
@@ -65,54 +61,65 @@ pub struct AeArray<T> {
 
 impl<T> AeArray<T> {
     /// Creates a new AeArray on the heap and returns a raw pointer to it.
-    /// The memory is allocated using the process heap (via crate::memory::allocate) to be compatible with the game's allocator.
+    /// The memory for the array elements and the struct itself is leaked (not managed by Rust anymore).
     pub fn new(count: u32) -> *mut Self
     where
         T: Default + Clone,
     {
-        // Allocate buffer for elements
+        // Allocate buffer for elements using msvcrt malloc
         let size_bytes = (count as usize) * std::mem::size_of::<T>();
-        let data_addr = crate::memory::allocate(size_bytes);
-        let data = data_addr as *mut T;
-
+        let data_ptr = crate::memory::allocate(size_bytes) as *mut T;
+        
         // Initialize elements
-        if !data.is_null() && count > 0 {
+        if !data_ptr.is_null() && count > 0 {
+             let default_val = T::default();
+             for i in 0..(count as usize) {
+                 unsafe {
+                     std::ptr::write(data_ptr.add(i), default_val.clone());
+                 }
+             }
+        }
+
+        // Allocate struct for AeArray using msvcrt malloc
+        let array_ptr = crate::memory::allocate(std::mem::size_of::<AeArray<T>>()) as *mut AeArray<T>;
+        
+        if !array_ptr.is_null() {
             unsafe {
-                let slice = std::slice::from_raw_parts_mut(data, count as usize);
-                for item in slice {
-                    std::ptr::write(item, T::default());
-                }
+                std::ptr::write(array_ptr, Self {
+                    size: count,
+                    data: data_ptr,
+                    size2: count,
+                });
             }
         }
-
-        let array = Self {
-            size: count,
-            data,
-            size2: count,
-        };
-
-        // Allocate the struct itself on the same heap
-        let struct_addr = crate::memory::allocate(std::mem::size_of::<Self>());
-        let struct_ptr = struct_addr as *mut Self;
-        unsafe {
-            std::ptr::write(struct_ptr, array);
-        }
-
-        struct_ptr
+        
+        array_ptr
     }
 
     pub fn from_vec(vec: Vec<T>) -> *mut Self {
         let count = vec.len() as u32;
-        let array_ptr = Self::new(count);
+        let size_bytes = (count as usize) * std::mem::size_of::<T>();
+        let data_ptr = crate::memory::allocate(size_bytes) as *mut T;
         
-        unsafe {
-            let array = &mut *array_ptr;
-            let slice = array.as_mut_slice();
-            for (i, item) in vec.into_iter().enumerate() {
-                slice[i] = item;
+        if !data_ptr.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(vec.as_ptr(), data_ptr, count as usize);
             }
         }
+        std::mem::forget(vec); // Prevent Vec from freeing memory AND dropping items
+
+        let array_ptr = crate::memory::allocate(std::mem::size_of::<AeArray<T>>()) as *mut AeArray<T>;
         
+        if !array_ptr.is_null() {
+            unsafe {
+                std::ptr::write(array_ptr, Self {
+                    size: count,
+                    data: data_ptr,
+                    size2: count,
+                });
+            }
+        }
+
         array_ptr
     }
 
@@ -149,36 +156,35 @@ impl<T> AeArray<T> {
     where T: DeepCopy
     {
         unsafe {
-            // 1. Calculate new size
-            let old_size = self.size as usize;
-            let new_size = old_size + 1;
-            let new_size_bytes = new_size * std::mem::size_of::<T>();
+            // 1. Create a new vector with capacity for size + 1
+            let mut new_vec = Vec::with_capacity((self.size + 1) as usize);
 
-            // 2. Allocate new buffer compatible with game allocator
-            let new_data_addr = crate::memory::allocate(new_size_bytes);
-            let new_data = new_data_addr as *mut T;
-
-            if !new_data.is_null() {
-                // 3. Deep copy existing elements
-                if !self.data.is_null() && old_size > 0 {
-                    let old_slice = std::slice::from_raw_parts(self.data, old_size);
-                    let new_slice = std::slice::from_raw_parts_mut(new_data, new_size);
-                    for i in 0..old_size {
-                        new_slice[i] = old_slice[i].deep_copy();
-                    }
+            // 2. Deep copy existing elements
+            if !self.data.is_null() && self.size > 0 {
+                let slice = std::slice::from_raw_parts(self.data, self.size as usize);
+                for item in slice {
+                    new_vec.push(item.deep_copy());
                 }
-
-                // 4. Deep copy and add the new element
-                let new_slice = std::slice::from_raw_parts_mut(new_data, new_size);
-                new_slice[old_size] = element.deep_copy();
-
-                // 5. Update the struct fields
-                self.size = new_size as u32;
-                self.size2 = new_size as u32;
-                self.data = new_data;
-                
-                // Old buffer is leaked as requested
             }
+
+            // 3. Deep copy and add the new element
+            new_vec.push(element.deep_copy());
+
+            // 4. Update the struct fields
+            let count = new_vec.len() as u32;
+            let size_bytes = (count as usize) * std::mem::size_of::<T>();
+            let new_data = crate::memory::allocate(size_bytes) as *mut T;
+            
+            if !new_data.is_null() {
+                 std::ptr::copy_nonoverlapping(new_vec.as_ptr(), new_data, count as usize);
+            }
+            std::mem::forget(new_vec); // Leak the vec so items are not dropped
+
+            self.size = count;
+            self.size2 = count;
+            self.data = new_data;
+
+            // 5. Old buffer is leaked (not freed) as per previous logic
         }
     }
 }
@@ -356,25 +362,27 @@ impl DeepCopy for AeString {
             // Usually for AeString, size is length.
             
             let len = self.size as usize;
-            let size_bytes = (len + 1) * 2;
+            let mut vec = Vec::with_capacity(len + 1); // +1 safety
+            let slice = std::slice::from_raw_parts(self.text, len);
+            vec.extend_from_slice(slice);
             
-            let new_text_addr = crate::memory::allocate(size_bytes);
-            let new_text = new_text_addr as *mut u16;
+            // Ensure null termination if not present (safety)
+            if vec.last() != Some(&0) {
+                 vec.push(0);
+            }
+            
+            let new_size = vec.len() as u32;
+            
+            let size_bytes = (new_size as usize) * 2;
+            let new_text = crate::memory::allocate(size_bytes) as *mut u16;
             
             if !new_text.is_null() {
-                let src_slice = std::slice::from_raw_parts(self.text, len);
-                let dst_slice = std::slice::from_raw_parts_mut(new_text, len + 1);
-                
-                for i in 0..len {
-                    dst_slice[i] = src_slice[i];
-                }
-                // Ensure null termination
-                dst_slice[len] = 0;
+                 std::ptr::copy_nonoverlapping(vec.as_ptr(), new_text, new_size as usize);
             }
             
             Self {
                 text: new_text,
-                size: self.size,
+                size: new_size,
             }
         }
     }
@@ -394,15 +402,39 @@ impl<T> DeepCopy for AeArray<T> where T: DeepCopy + Default + Clone {
                 new_vec.push(item.deep_copy());
             }
             
-            let new_data = new_vec.as_mut_ptr();
-            let new_size = new_vec.len() as u32;
+            let count = new_vec.len() as u32;
+            let size_bytes = (count as usize) * std::mem::size_of::<T>();
+            let new_data = crate::memory::allocate(size_bytes) as *mut T;
+            
+            if !new_data.is_null() {
+                 std::ptr::copy_nonoverlapping(new_vec.as_ptr(), new_data, count as usize);
+            }
+            
             std::mem::forget(new_vec); // Leak
             
             Self {
-                size: new_size,
+                size: count,
                 data: new_data,
-                size2: new_size,
+                size2: count,
             }
+        }
+    }
+}
+
+impl<T> DeepCopy for *mut AeArray<T> where T: DeepCopy + Default + Clone {
+    fn deep_copy(&self) -> Self {
+        if self.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe {
+            let original = &**self;
+            let copy = original.deep_copy();
+            
+            let ptr = crate::memory::allocate(std::mem::size_of::<AeArray<T>>()) as *mut AeArray<T>;
+            if !ptr.is_null() {
+                 std::ptr::write(ptr, copy);
+            }
+            ptr
         }
     }
 }
@@ -420,7 +452,12 @@ impl DeepCopy for *mut System {
         unsafe {
             let original = &**self;
             let copy = original.deep_copy();
-            Box::into_raw(Box::new(copy))
+            
+            let ptr = crate::memory::allocate(std::mem::size_of::<System>()) as *mut System;
+            if !ptr.is_null() {
+                 std::ptr::write(ptr, copy);
+            }
+            ptr
         }
     }
 }
@@ -431,7 +468,13 @@ pub trait HeapAlloc: Sized {
 
 impl<T> HeapAlloc for T {
     fn leak_to_heap(self) -> *mut Self {
-        Box::into_raw(Box::new(self))
+        unsafe {
+            let ptr = crate::memory::allocate(std::mem::size_of::<Self>()) as *mut Self;
+            if !ptr.is_null() {
+                std::ptr::write(ptr, self);
+            }
+            ptr
+        }
     }
 }
 
@@ -446,7 +489,12 @@ impl DeepCopy for System {
              unsafe {
                  let old_array = &*self.station_ids;
                  let new_array_struct = old_array.deep_copy();
-                 new_sys.station_ids = Box::into_raw(Box::new(new_array_struct));
+                 
+                 let ptr = crate::memory::allocate(std::mem::size_of::<AeArray<u32>>()) as *mut AeArray<u32>;
+                 if !ptr.is_null() {
+                     std::ptr::write(ptr, new_array_struct);
+                 }
+                 new_sys.station_ids = ptr;
              }
         }
         
@@ -455,7 +503,12 @@ impl DeepCopy for System {
              unsafe {
                  let old_array = &*self.linked_system_ids;
                  let new_array_struct = old_array.deep_copy();
-                 new_sys.linked_system_ids = Box::into_raw(Box::new(new_array_struct));
+                 
+                 let ptr = crate::memory::allocate(std::mem::size_of::<AeArray<u32>>()) as *mut AeArray<u32>;
+                 if !ptr.is_null() {
+                     std::ptr::write(ptr, new_array_struct);
+                 }
+                 new_sys.linked_system_ids = ptr;
              }
         }
         
@@ -471,7 +524,12 @@ impl DeepCopy for Galaxy {
             unsafe {
                  let old_array = &*self.systems;
                  let new_array_struct = old_array.deep_copy();
-                 new_galaxy.systems = Box::into_raw(Box::new(new_array_struct));
+                 
+                 let ptr = crate::memory::allocate(std::mem::size_of::<AeArray<*mut System>>()) as *mut AeArray<*mut System>;
+                 if !ptr.is_null() {
+                     std::ptr::write(ptr, new_array_struct);
+                 }
+                 new_galaxy.systems = ptr;
             }
         }
         

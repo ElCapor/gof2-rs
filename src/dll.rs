@@ -179,13 +179,13 @@ impl Default for Station {
     }
 }
 
-static mut STATIONS: Vec<Station> = Vec::new();
+static mut STATIONS: Vec<*mut Station> = Vec::new();
 
 pub unsafe extern "stdcall" fn load_station_from_id(id: *mut u16) -> usize {
     unsafe { 
-        if STATIONS.iter().any(|station| station.id == id.read_val().unwrap() as usize) {
+        if STATIONS.iter().any(|station| station.read_val().unwrap().id == id.read_val().unwrap() as usize) {
         let result = AeArray::<Station>::new(1);
-        result.read_val_mut().unwrap()[0] = STATIONS.iter().find(|station| station.id == id.read_val().unwrap() as usize).unwrap().clone();
+        result.read_val_mut().unwrap()[0] = STATIONS.iter().find(|station| station.read_val().unwrap().id == id.read_val().unwrap() as usize).unwrap().read_val().unwrap().clone();
         return result as usize;
     }
     }
@@ -203,11 +203,11 @@ pub unsafe extern "stdcall" fn load_stations_from_system(system: *mut System) ->
     let sys: System = system.read_val().expect("Failed to read system");
     unsafe {
         // collect all stations with system id equal to sys.id
-        let stations = STATIONS.iter().filter(|station| station.system_id == sys.id as usize).collect::<Vec<_>>();
+        let stations = STATIONS.iter().filter(|station| station.read_val().unwrap().system_id == sys.id as usize).collect::<Vec<_>>();
         if !stations.is_empty() {
             let result = AeArray::<Station>::new(stations.len() as u32);
             for i in 0..stations.len() {
-                result.read_val_mut().unwrap()[i] = stations[i].clone();
+                result.read_val_mut().unwrap()[i] = stations[i].read_val().unwrap().clone();
             }
             println!("Return {:X}", result as usize);
             return result as usize;
@@ -217,8 +217,13 @@ pub unsafe extern "stdcall" fn load_stations_from_system(system: *mut System) ->
     let result = unsafe {
         LOAD_STATIONS_FROM_SYSTEM_ORIG.as_ref().unwrap()(system)
     };
+
+
     println!("load_stations_from_system param: {:X}", system as usize);
     println!("load_stations_from_system: {:X}", result);
+
+
+
 
 
     result
@@ -301,7 +306,7 @@ pub fn entry_point() {
         unk1: 0,
         tech_level: 10,
         unk2: [0; 20],
-    });
+    }.leak_to_heap());
 }
     //crate::memory::suspend_process();
     unsafe { 
